@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seviyeli Hayvan Eşleştirme Oyunu</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Konfeti Kütüphanesi CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+    
+    <script>
+        // Tema Renklerini Ayarla
+        let currentTheme = 'theme1';
+
+        const THEMES = {
+            theme1: {
+                primary: '#f59e0b', // Amber (Altın/Hazine)
+                secondary: '#3b82f6', // Blue (Mavi)
+                darkbg: '#1f2937', // Gray 800
+                cardfront: '#3b82f6',
+                gridbg: '#4b5563', // Gray 600
+                movecolor: '#fde047', // Yellow 300
+            },
+            theme2: {
+                primary: '#10b981', // Emerald (Zümrüt)
+                secondary: '#8b5cf6', // Violet (Mor)
+                darkbg: '#171717', // Neutral 900
+                cardfront: '#8b5cf6',
+                gridbg: '#374151', // Gray 700
+                movecolor: '#a78bfa', // Violet 400
+            }
+        };
+
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: ({ opacityValue }) => THEMES[currentTheme].primary,
+                        secondary: ({ opacityValue }) => THEMES[currentTheme].secondary,
+                        darkbg: ({ opacityValue }) => THEMES[currentTheme].darkbg,
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Kartın 3D çevirme animasyonu için özel CSS */
+        .card {
+            /* Transform 3D Perspektifini oluşturmak için */
+            perspective: 1000px; 
+            transition: transform 0.5s;
+        }
+
+        .card-inner {
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s;
+            transform-style: preserve-3d;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        .card.flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .card-front, .card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.75rem; 
+            padding: 4px;
+        }
+
+        .card-front {
+            background-color: var(--card-front-color); 
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+            font-weight: bold;
+        }
+        
+        .card-back {
+            background-color: white;
+            transform: rotateY(180deg);
+            color: #1f2937;
+            font-size: 2.5rem; 
+            font-weight: 700;
+            line-height: 1.2;
+            overflow: hidden;
+        }
+
+        .card:not(.matched):not(.flipped) .card-front:hover {
+            transform: scale(1.05);
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.4);
+        }
+        
+        /* Eşleşen kartların stili */
+        .card.matched .card-inner {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        /* Hazine kartları için özel stil (Seviye 3) */
+        .card.prize-match .card-inner { 
+            border: 3px solid #FFD700; /* Altın renginde belirgin sınır */
+            box-shadow: 0 0 15px #FFD700;
+        }
+        
+        /* Seviye 3'te kartlar karıştırılırken kullanılacak animasyon */
+        #game-grid.shuffling {
+            transition: opacity 0.2s;
+            opacity: 0.2;
+            pointer-events: none;
+        }
+
+        /* Mesaj Kutusu Stili */
+        #message-box {
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 50;
+        }
+
+        /* Anlık Ödül Mesajı */
+        #prize-popup {
+            position: fixed;
+            top: 15%;
+            left: 50%;
+            transform: translate(-50%, 0);
+            z-index: 60;
+            background-color: #38a169; /* Green 600 */
+            padding: 10px 20px;
+            border-radius: 9999px; /* rounded-full */
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            opacity: 0;
+            transition: opacity 0.5s, transform 0.5s;
+        }
+        #prize-popup.active {
+            opacity: 1;
+            transform: translate(-50%, -20px);
+        }
+
+        /* Dinamik grid kolon ayarları */
+        #game-grid.grid-cols-4 {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+        #game-grid.grid-cols-6 { 
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+        }
+    </style>
+</head>
+<body class="font-sans min-h-screen flex items-center justify-center p-4 overflow-auto transition-colors duration-500" id="body-container">
+
+    <!-- Anlık Ödül Mesajı -->
+    <div id="prize-popup" class="hidden"></div>
+
+    <div class="w-full max-w-7xl p-6 rounded-3xl shadow-2xl space-y-6 transition-colors duration-500" id="main-container">
+        
+        <!-- Başlık ve Durum Çubuğu -->
+        <div class="text-center">
+            <h1 class="text-4xl font-extrabold transition-colors duration-500" id="game-title">Hayvan Eşleştirme (Seviye 1)</h1>
+            <p class="text-gray-400 mt-1" id="level-info">4x4 Izgara | 8 Çift</p>
+        </div>
+
+        <!-- Skor/Durum Paneli -->
+        <div class="flex justify-between items-center text-white bg-gray-800 p-4 rounded-xl shadow-inner transition-colors duration-500">
+            <div id="moves" class="text-center">
+                <div class="text-2xl font-bold" id="moves-display">0</div>
+                <div class="text-sm text-gray-400">Hamle</div>
+            </div>
+            <div id="time" class="text-center">
+                <div class="text-2xl font-bold text-secondary" id="time-display">0s</div>
+                <div class="text-sm text-gray-400">Süre</div>
+            </div>
+            <button id="reset-button" class="text-white font-bold py-2 px-4 rounded-full transition-all duration-200 shadow-lg active:scale-95" style="background-color: var(--primary-color);">
+                Yeniden Başla
+            </button>
+        </div>
+
+        <!-- Kart Izgarası -->
+        <div id="game-grid" class="grid gap-3 md:gap-4 p-2 rounded-xl transition-colors duration-500">
+            <!-- Kartlar buraya JavaScript ile eklenecek -->
+        </div>
+
+    </div>
+
+    <!-- Oyun Bitti Mesaj Kutusu (Modal) -->
+    <div id="message-box" class="fixed hidden p-8 bg-gray-800 rounded-2xl shadow-2xl text-center border-4 transition-colors duration-500">
+        <h2 id="message-title" class="text-3xl font-bold mb-4 transition-colors duration-500"></h2>
+        <p id="message-text" class="text-white text-lg mb-6"></p>
+        <button id="modal-action-button" class="px-6 py-3 text-white text-lg font-bold rounded-xl shadow-lg hover:brightness-110 transition-colors active:scale-95" style="background-color: var(--secondary-color);">
+            Sonraki Seviyeye Geç
+        </button>
+    </div>
+
+    <script>
+        // DOM Elementleri
+        const bodyContainer = document.getElementById('body-container');
+        const mainContainer = document.getElementById('main-container');
+        const gameTitle = document.getElementById('game-title');
+        const levelInfo = document.getElementById('level-info');
+        const gameGrid = document.getElementById('game-grid');
+        const movesDisplay = document.getElementById('moves-display');
+        const timeDisplay = document.getElementById('time-display');
+        const resetButton = document.getElementById('reset-button');
+        const messageBox = document.getElementById('message-box');
+        const messageTitle = document.getElementById('message-title');
+        const messageText = document.getElementById('message-text');
+        const modalActionButton = document.getElementById('modal-action-button');
+        const prizePopup = document.getElementById('prize-popup');
+
+        // Oyun Ayarları (Hayvan Figürleri)
+        const ALL_SYMBOLS = [
+            '🐘', '🦒', '🦁', '🐻', '🦊', '🐼', '🐺', '🦉', 
+            '🐸', '🐒', '🐅', '🐎', '🐫', '🦓', '🦢', '🐬', 
+            '🐠', '🐳', '🦀', '🦋', // Toplam 20 benzersiz sembol (18 çifte ihtiyacımız var)
+        ]; 
+        
+        // Level 3'te para ödülü veren semboller
+        const PRIZE_SYMBOLS = ['🦁', '🐅', '🐘']; 
+
+        const LEVEL_SETTINGS = {
+            1: { pairs: 8, gridSize: 4, theme: 'theme1', maxSymbols: 8, isCoinPuzzle: false }, // 4x4
+            2: { pairs: 18, gridSize: 6, theme: 'theme2', maxSymbols: 18, isCoinPuzzle: false }, // 6x6
+            3: { pairs: 18, gridSize: 6, theme: 'theme1', maxSymbols: 18, isCoinPuzzle: true }  // 6x6 Hazine Avı
+        };
+        
+        // Oyun Durumu
+        let currentLevel = 1;
+        let cards = [];
+        let flippedCards = [];
+        let matchedPairs = 0;
+        let moves = 0;
+        let timer = null;
+        let timeElapsed = 0;
+        let waiting = false; 
+        let lastMatchTime = 0; 
+        let totalPrize = 0; // Toplam kazanılan altın
+
+        // --- TEMA VE STİL YÖNETİMİ ---
+        const applyTheme = (themeName) => {
+            currentTheme = themeName; 
+            const theme = THEMES[themeName];
+            
+            // CSS Değişkenlerini Güncelle
+            document.documentElement.style.setProperty('--primary-color', theme.primary);
+            document.documentElement.style.setProperty('--secondary-color', theme.secondary);
+            document.documentElement.style.setProperty('--card-front-color', theme.cardfront);
+
+            // Tailwind Sınıflarını Güncelle
+            bodyContainer.className = `font-sans min-h-screen flex items-center justify-center p-4 overflow-auto transition-colors duration-500 bg-[${theme.darkbg}]`;
+            mainContainer.className = `w-full max-w-7xl p-6 rounded-3xl shadow-2xl space-y-6 transition-colors duration-500 bg-[${theme.darkbg}]`;
+            gameGrid.style.backgroundColor = theme.gridbg;
+            
+            movesDisplay.style.color = theme.movecolor;
+            gameTitle.style.color = theme.primary;
+            modalActionButton.style.backgroundColor = theme.secondary;
+            resetButton.style.backgroundColor = theme.primary;
+            
+            messageBox.style.borderColor = theme.primary;
+            document.getElementById('message-title').style.color = theme.primary;
+
+            bodyContainer.classList.remove('bg-gray-900', 'bg-neutral-900');
+            bodyContainer.classList.add(themeName === 'theme1' ? 'bg-gray-900' : 'bg-neutral-900');
+        };
+
+        // Rastgele karıştırma fonksiyonu (Fisher-Yates)
+        const shuffle = (array) => {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        };
+
+        // --- KONFETİ EFEKTİ (YILDIZ PATLAMASI) ---
+        const triggerConfetti = (isFastMatch) => {
+            const theme = THEMES[currentTheme];
+            const colors = [theme.primary, theme.secondary, '#FFFFFF'];
+            
+            const baseParams = {
+                particleCount: isFastMatch ? 150 : 70, 
+                spread: isFastMatch ? 80 : 50,
+                origin: { y: 0.6 },
+                colors: colors,
+                disableForReducedMotion: true
+            };
+            
+            confetti({ ...baseParams, angle: 60, startVelocity: isFastMatch ? 50 : 35, origin: { x: 0.3 } });
+            confetti({ ...baseParams, angle: 120, startVelocity: isFastMatch ? 50 : 35, origin: { x: 0.7 } });
+
+            if (isFastMatch) {
+                 confetti({
+                    ...baseParams,
+                    particleCount: 200,
+                    spread: 360,
+                    ticks: 100,
+                    gravity: 0.5,
+                    decay: 0.94,
+                    startVelocity: 60,
+                    scalar: 1.5,
+                    shapes: ['star', 'circle'],
+                    origin: { y: 0.4, x: 0.5 }
+                });
+            }
+        };
+
+        // --- ANLIK ÖDÜL GÖSTERİMİ ---
+        const showPrizeMessage = (text) => {
+            prizePopup.textContent = text;
+            prizePopup.classList.remove('hidden');
+            // Animasyonu tetikle
+            setTimeout(() => {
+                prizePopup.classList.add('active');
+            }, 10); 
+
+            // 1.5 saniye sonra gizle
+            setTimeout(() => {
+                prizePopup.classList.remove('active');
+                setTimeout(() => {
+                    prizePopup.classList.add('hidden');
+                }, 500); // Gizlenme animasyonu süresi
+            }, 1500);
+        };
+        
+        // --- LEVEL 3: KARTLARI KARIŞTIRMA ---
+        const rearrangeCards = () => {
+            if (currentLevel !== 3) return;
+            
+            gameGrid.classList.add('shuffling');
+
+            // Tüm kart elementlerini al
+            const allElements = Array.from(gameGrid.children);
+            
+            // Yalnızca eşleşmemiş kartları al
+            const activeElements = allElements.filter(el => !el.classList.contains('matched'));
+            const matchedElements = allElements.filter(el => el.classList.contains('matched'));
+
+            // Eşleşmemiş kartların sırasını karıştır
+            const shuffledActiveElements = shuffle(activeElements);
+            
+            // Tüm elementleri karıştırılmış sırayla birleştir (bu, eşleşmiş kartların yerinin de değişebileceği anlamına gelir, bu yüzden sadece DOM sırasını karıştırıyoruz)
+            const shuffledElementsForDOM = shuffle(allElements);
+
+            // DOM'u boşalt ve yeni sırayla tekrar doldur
+            gameGrid.innerHTML = '';
+            shuffledElementsForDOM.forEach(element => {
+                gameGrid.appendChild(element);
+            });
+            
+            // Animasyon bitince normal görünüme geç
+            setTimeout(() => {
+                gameGrid.classList.remove('shuffling');
+            }, 700);
+        };
+
+
+        // --- OYUN BAŞLATMA VE SEVİYE YÖNETİMİ ---
+        const initializeGame = () => {
+            const settings = LEVEL_SETTINGS[currentLevel];
+
+            // 1. Tema Uygula
+            applyTheme(settings.theme);
+
+            // 2. Durum Sıfırla
+            cards = [];
+            flippedCards = [];
+            matchedPairs = 0;
+            moves = 0;
+            timeElapsed = 0;
+            waiting = false;
+            lastMatchTime = 0; 
+            if (currentLevel === 1) {
+                totalPrize = 0; // Oyuna baştan başlanıyorsa ödülü sıfırla
+            }
+            
+            clearInterval(timer);
+            timer = null;
+
+            // 3. UI Güncelle
+            let levelTitle = `Hayvan Eşleştirme (Seviye ${currentLevel})`;
+            if (settings.isCoinPuzzle) {
+                levelTitle = "Seviye 3: Hazine Avı (Para Ödüllü)";
+            }
+            gameTitle.textContent = levelTitle;
+            levelInfo.textContent = `${settings.gridSize}x${settings.gridSize} Izgara | ${settings.pairs} Çift`;
+
+            // 4. Izgara Boyutunu Ayarla
+            gameGrid.classList.remove('grid-cols-4', 'grid-cols-6');
+            gameGrid.classList.add(`grid-cols-${settings.gridSize}`);
+            gameGrid.innerHTML = ''; 
+            messageBox.classList.add('hidden');
+
+
+            // 5. Kart Verilerini Oluşturma
+            const selectedSymbols = ALL_SYMBOLS.slice(0, settings.maxSymbols); 
+            const gameSymbols = shuffle([...selectedSymbols, ...selectedSymbols]); 
+            
+            // 6. Kart Elementlerini Oluştur ve Ekle
+            gameSymbols.forEach((symbol, index) => {
+                const cardElement = createCardElement(symbol, index, settings.gridSize);
+                gameGrid.appendChild(cardElement);
+                cards.push({ id: index, symbol: symbol, element: cardElement, isFlipped: false, isMatched: false });
+            });
+            
+            // 7. Zamanlayıcıyı Başlat
+            startTimer();
+        };
+
+        // Kart elementini oluşturma
+        const createCardElement = (symbol, id, gridSize) => {
+            const card = document.createElement('div');
+            // Boyut ayarı: 4x4 için büyük, 6x6 için orta boy
+            let sizeClass = 'text-3xl md:text-4xl'; 
+            if (gridSize === 6) {
+                sizeClass = 'text-2xl md:text-3xl'; 
+            } 
+            
+            card.className = `card aspect-square relative cursor-pointer rounded-xl`;
+            card.dataset.id = id;
+            card.onclick = handleCardClick;
+
+            card.innerHTML = `
+                <div class="card-inner">
+                    <div class="card-front text-xl font-bold shadow-lg flex-col">
+                        <span class="text-3xl">?</span>
+                    </div>
+                    <div class="card-back bg-white shadow-lg flex-col p-1">
+                        <span class="block text-center select-none ${sizeClass}">${symbol}</span>
+                    </div>
+                </div>
+            `;
+            return card;
+        };
+
+        // Zamanlayıcıyı başlatma
+        const startTimer = () => {
+            if (timer) return; 
+            timer = setInterval(() => {
+                timeElapsed++;
+                timeDisplay.textContent = timeElapsed + 's';
+            }, 1000);
+        };
+
+        // Kart tıklama olayı yöneticisi
+        const handleCardClick = (event) => {
+            const cardElement = event.currentTarget;
+            const cardId = parseInt(cardElement.dataset.id);
+            const cardData = cards.find(c => c.id === cardId);
+
+            if (waiting || cardData.isMatched || cardData.isFlipped) {
+                return;
+            }
+
+            flipCard(cardData);
+            flippedCards.push(cardData);
+
+            if (flippedCards.length === 2) {
+                moves++;
+                movesDisplay.textContent = moves;
+                waiting = true;
+                checkForMatch();
+            }
+        };
+
+        // Kartı çevir görseli ve verisi
+        const flipCard = (cardData) => {
+            cardData.isFlipped = true;
+            cardData.element.classList.add('flipped');
+        };
+        
+        // Kartı geri çevir görseli ve verisi
+        const unflipCard = (cardData) => {
+            cardData.isFlipped = false;
+            cardData.element.classList.remove('flipped');
+        };
+
+        // Eşleşme kontrolü
+        const checkForMatch = () => {
+            const [card1, card2] = flippedCards;
+            const settings = LEVEL_SETTINGS[currentLevel];
+            const currentTime = Date.now(); 
+            
+            if (card1.symbol === card2.symbol) {
+                // Eşleşti!
+                setTimeout(() => {
+                    card1.isMatched = true;
+                    card2.isMatched = true;
+                    card1.element.classList.add('matched');
+                    card2.element.classList.add('matched');
+                    matchedPairs++;
+                    
+                    // --- LEVEL 3 PARA ÖDÜLÜ LOGİĞİ ---
+                    if (settings.isCoinPuzzle && PRIZE_SYMBOLS.includes(card1.symbol)) {
+                        const prizeAmount = Math.floor(Math.random() * 200) + 100; // 100-300 Altın
+                        totalPrize += prizeAmount;
+                        
+                        // Ödül kartlarına özel stil ekle ve anlık mesaj göster
+                        card1.element.classList.add('prize-match');
+                        card2.element.classList.add('prize-match');
+                        showPrizeMessage(`+${prizeAmount} ALTIN! 💰`);
+                    }
+                    
+                    // Hız kontrolü: 2 saniyenin altı hızlı sayılır.
+                    let isFastMatch = false;
+                    if (lastMatchTime !== 0) {
+                        const timeDifference = currentTime - lastMatchTime; 
+                        if (timeDifference < 2000) { 
+                            isFastMatch = true;
+                        }
+                    }
+                    
+                    triggerConfetti(isFastMatch); 
+                    lastMatchTime = currentTime; 
+
+                    flippedCards = [];
+                    waiting = false;
+
+                    if (matchedPairs === settings.pairs) {
+                        gameOver();
+                    }
+                }, 500);
+            } else {
+                // Eşleşmedi, kartları geri çevir
+                setTimeout(() => {
+                    unflipCard(card1);
+                    unflipCard(card2);
+                    
+                    flippedCards = [];
+                    waiting = false;
+
+                    // --- LEVEL 3 YER DEĞİŞTİRME LOGİĞİ ---
+                    if (settings.isCoinPuzzle) {
+                        rearrangeCards();
+                    }
+                }, 1000); 
+            }
+        };
+
+        // Oyun Bitti
+        const gameOver = () => {
+            clearInterval(timer);
+            
+            // Büyük konfeti patlaması
+            confetti({
+                particleCount: 400,
+                spread: 360,
+                ticks: 150,
+                gravity: 0.5,
+                decay: 0.94,
+                startVelocity: 60,
+                scalar: 2.0,
+                shapes: ['star', 'circle', 'square'],
+                origin: { y: 0.5, x: 0.5 },
+                colors: [THEMES[currentTheme].primary, THEMES[currentTheme].secondary, '#FFFFFF', '#FFD700']
+            });
+            
+            if (currentLevel < Object.keys(LEVEL_SETTINGS).length) {
+                // Seviye Atlama (1 -> 2 veya 2 -> 3)
+                const nextLevelSettings = LEVEL_SETTINGS[currentLevel + 1];
+                let nextLevelText = nextLevelSettings.isCoinPuzzle 
+                    ? `Şimdi en zorlu seviyeye, Para Ödüllü Hazine Avı'na geçiyoruz! (6x6 - Yanlış hamlede kartlar karışır!)` 
+                    : `Şimdi ${nextLevelSettings.gridSize}x${nextLevelSettings.gridSize} ızgaraya geçelim!`;
+                
+                messageTitle.textContent = 'Seviye Tamamlandı!';
+                messageText.textContent = `${moves} hamle ve ${timeElapsed} saniyede Seviye ${currentLevel}'ı bitirdin. ${nextLevelText}`;
+                modalActionButton.textContent = 'Sonraki Seviyeye Geç';
+                modalActionButton.onclick = nextLevel;
+            } else {
+                // Son Seviye Bitti (Seviye 3: Hazine Avı)
+                messageTitle.textContent = 'Oyun Sonu: Hazine Avı Başarıldı!';
+                messageText.innerHTML = `Tebrikler! Tüm seviyeleri ${moves} hamlede bitirdin. 
+                                        <br><br>Toplam kazancın: <span class="text-4xl font-extrabold text-yellow-300">${totalPrize} Altın</span>!`;
+                modalActionButton.textContent = 'Tekrar Oyna (Seviye 1)';
+                modalActionButton.onclick = () => { currentLevel = 1; initializeGame(); };
+            }
+            
+            messageBox.classList.remove('hidden');
+        };
+        
+        // Sonraki Seviyeye Geçiş
+        const nextLevel = () => {
+            currentLevel++;
+            initializeGame();
+        };
+
+
+        // Olay dinleyicilerini tanımla
+        resetButton.addEventListener('click', () => { currentLevel = 1; initializeGame(); });
+
+        // Sayfa yüklendiğinde oyunu başlat
+        window.onload = () => {
+             applyTheme(LEVEL_SETTINGS[currentLevel].theme); 
+             initializeGame();
+        };
+
+    </script>
+</body>
+</html>
